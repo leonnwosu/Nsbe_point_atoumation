@@ -1,0 +1,234 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Points Calculator</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    body { font-family: system-ui, Arial; margin: 24px; max-width: 980px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; flex: 1; min-width: 280px; }
+    label { display:block; font-weight: 600; margin-bottom: 6px; }
+    input, select, button { width: 100%; padding: 10px; margin-bottom: 10px; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    .muted { color: #666; font-size: 14px; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>Org Points Calculator</h1>
+  <p class="muted">Runs entirely in your browser. Upload CSVs, calculate, then download the updated file.</p>
+
+  <div class="row">
+    <div class="card">
+      <label>counted_points.csv (name, points)</label>
+      <input id="countedFile" type="file" accept=".csv" />
+      <label>add_points.csv (name, ...)</label>
+      <input id="addFile" type="file" accept=".csv" />
+      <label>Event type</label>
+      <select id="eventType"></select>
+      <button id="calcBtn">Calculate</button>
+      <button id="downloadBtn" disabled>Download updated counted_points.csv</button>
+      <div id="status" class="muted"></div>
+      <div id="err" class="error"></div>
+    </div>
+
+    <div class="card">
+      <h3>Summary</h3>
+      <div id="summary" class="muted">No results yet.</div>
+      <h3>Not found (names in add_points not in counted_points)</h3>
+      <div id="notFound" class="muted">—</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Preview (first 25 rows)</h3>
+    <div id="preview" class="muted">—</div>
+  </div>
+
+<script>
+  // Your scoring rules
+  const EVENTS = {
+    "community service": 5,
+    "meeting": 1,
+    "workshop": 3,
+    "fundraiser": 2
+  };
+
+  const eventSelect = document.getElementById("eventType");
+  for (const [k, v] of Object.entries(EVENTS)) {
+    const opt = document.createElement("option");
+    opt.value = k;
+    opt.textContent = `${k} (+${v})`;
+    eventSelect.appendChild(opt);
+  }
+
+  const statusEl = document.getElementById("status");
+  const errEl = document.getElementById("err");
+  const summaryEl = document.getElementById("summary");
+  const previewEl = document.getElementById("preview");
+  const notFoundEl = document.getElementById("notFound");
+  const downloadBtn = document.getElementById("downloadBtn");
+
+  let updatedCountedRows = null;
+
+  function cleanName(name) {
+    return String(name ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " "); // collapse whitespace
+      // .replace(/[^\w\s'-]/g, ""); // OPTIONAL: remove punctuation
+  }
+
+  function parseCsvFile(file) {
+    return new Promise((resolve, reject) => {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.errors?.length) {
+            reject(new Error(results.errors[0].message));
+          } else {
+            resolve(results.data);
+          }
+        }
+      });
+    });
+  }
+
+  function toCsv(rows) {
+    return Papa.unparse(rows, { quotes: false });
+  }
+
+  function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderPreview(rows) {
+    const show = rows.slice(0, 25);
+    if (!show.length) {
+      previewEl.textContent = "—";
+      return;
+    }
+    const cols = Object.keys(show[0]);
+    let html = "<table><thead><tr>";
+    for (const c of cols) html += `<th>${c}</th>`;
+    html += "</tr></thead><tbody>";
+    for (const r of show) {
+      html += "<tr>";
+      for (const c of cols) html += `<td>${(r[c] ?? "").toString()}</td>`;
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+    previewEl.innerHTML = html;
+  }
+
+  document.getElementById("calcBtn").addEventListener("click", async () => {
+    errEl.textContent = "";
+    statusEl.textContent = "Reading files…";
+    summaryEl.textContent = "Working…";
+    notFoundEl.textContent = "—";
+    downloadBtn.disabled = true;
+    updatedCountedRows = null;
+
+    const countedFile = document.getElementById("countedFile").files[0];
+    const addFile = document.getElementById("addFile").files[0];
+    const eventType = eventSelect.value;
+
+    if (!countedFile || !addFile) {
+      statusEl.textContent = "";
+      errEl.textContent = "Please upload both CSV files.";
+      summaryEl.textContent = "No results yet.";
+      return;
+    }
+
+    const addPoints = EVENTS[eventType] ?? 0;
+
+    try {
+      const countedRows = await parseCsvFile(countedFile);
+      const addRows = await parseCsvFile(addFile);
+
+      // basic validation
+      const countedCols = countedRows[0] ? Object.keys(countedRows[0]).map(c => c.toLowerCase()) : [];
+      if (!countedCols.includes("name") || !countedCols.includes("points")) {
+        throw new Error("counted_points.csv must have headers: name, points");
+      }
+      const addCols = addRows[0] ? Object.keys(addRows[0]).map(c => c.toLowerCase()) : [];
+      if (!addCols.includes("name")) {
+        throw new Error("add_points.csv must have a header column: name");
+      }
+
+      // Build map from counted points
+      const map = new Map(); // name -> { rowRef, points }
+      for (const row of countedRows) {
+        const n = cleanName(row.name);
+        if (!n) continue;
+        const pts = Number(row.points);
+        // If duplicates, we keep first; could also sum or error
+        if (!map.has(n)) {
+          map.set(n, { rowRef: row, points: Number.isFinite(pts) ? pts : 0 });
+        }
+      }
+
+      // Apply additions
+      let matched = 0;
+      const notFound = new Set();
+      for (const row of addRows) {
+        const n = cleanName(row.name);
+        if (!n) continue;
+        const hit = map.get(n);
+        if (hit) {
+          hit.points += addPoints;
+          matched++;
+        } else {
+          notFound.add(n);
+        }
+      }
+
+      // Write back updated points into countedRows
+      for (const { rowRef, points } of map.values()) {
+        rowRef.points = points;
+      }
+
+      updatedCountedRows = countedRows;
+
+      // UI updates
+      statusEl.textContent = `Done. Event "${eventType}" adds +${addPoints} per match.`;
+      summaryEl.innerHTML = `
+        <div><b>Matches:</b> ${matched}</div>
+        <div><b>Not found:</b> ${notFound.size}</div>
+        <div><b>Counted rows:</b> ${countedRows.length}</div>
+        <div><b>Add rows:</b> ${addRows.length}</div>
+      `;
+
+      notFoundEl.textContent = notFound.size ? Array.from(notFound).slice(0, 200).join(", ") : "—";
+      renderPreview(countedRows);
+      downloadBtn.disabled = false;
+
+    } catch (e) {
+      statusEl.textContent = "";
+      errEl.textContent = e.message || String(e);
+      summaryEl.textContent = "No results yet.";
+      previewEl.textContent = "—";
+    }
+  });
+
+  downloadBtn.addEventListener("click", () => {
+    if (!updatedCountedRows) return;
+    const csv = toCsv(updatedCountedRows);
+    downloadTextFile("counted_points_updated.csv", csv);
+  });
+</script>
+</body>
+</html>
