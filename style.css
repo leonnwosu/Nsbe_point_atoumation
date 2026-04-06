@@ -1,0 +1,10 @@
+body { font-family: system-ui, Arial; margin: 24px; max-width: 980px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; flex: 1; min-width: 280px; }
+label { display:block; font-weight: 600; margin-bottom: 6px; }
+input, select, button { width: 100%; padding: 10px; margin-bottom: 10px; }
+button { cursor: pointer; }
+table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+.muted { color: #666; font-size: 14px; }
+.error { color: #b00020; }
